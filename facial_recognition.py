@@ -1,216 +1,219 @@
-# facial_recognition.py
 import cv2
 import mediapipe as mp
-import time
 import numpy as np
+import threading
+import queue
+import time
 from controller import ArduinoController
 
-# --- KONFIGURASI DAN INISIALISASI ---
+# Konfigurasi Utama
+ARDUINO_PORT = 'COM3'
+FRAME_SKIP = 5
+ENABLE_DRAW = True
+CAM_WIDTH, CAM_HEIGHT = 320, 240
+osd_font = cv2.FONT_HERSHEY_SIMPLEX
 
-# 1. Inisialisasi Kontroler Arduino
-# Ganti 'COM3' dengan port serial Arduino Anda
-ARDUINO_PORT = 'COM3' 
+ACTION_COLORS = {
+    "STOP": (0, 0, 255),
+    "FORWARD": (0, 255, 0),
+    "LEFT": (0, 255, 255),
+    "RIGHT": (255, 0, 255),
+    "BACKWARD": (255, 0, 0),
+}
+
+# Treshold untuk Deteksi
+EAR_THRESHOLD = 0.22  
+DOUBLE_BLINK_WINDOW = 1.2 
+LIDAH_RED_RATIO = 0.45  
+
+
+# Inisialisasi Arduino
 arduino = ArduinoController(port=ARDUINO_PORT)
 
-# 2. Inisialisasi Mediapipe Face Mesh
 mp_face_mesh = mp.solutions.face_mesh
 face_mesh = mp_face_mesh.FaceMesh(
-    static_image_mode=False,   # << penting agar dia pakai tracking, bukan deteksi penuh
+    static_image_mode=False,
     max_num_faces=1,
     refine_landmarks=True,
     min_detection_confidence=0.5,
-    min_tracking_confidence=0.5
+    min_tracking_confidence=0.5,
 )
 
-mp_drawing = mp.solutions.drawing_utils
-drawing_spec = mp_drawing.DrawingSpec(thickness=1, circle_radius=1, color=(0, 255, 0)) # Warna mesh hijau
-
-# 3. Inisialisasi Kamera OpenCV
 cap = cv2.VideoCapture(0)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAM_WIDTH)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_HEIGHT)
 if not cap.isOpened():
-    print("Error: Tidak dapat membuka kamera.")
+    print("Tidak bisa membuka kamera.")
     arduino.close()
     exit()
 
-# Beri waktu kamera untuk "pemanasan" (seperti diminta)
-print("Kamera sedang disiapkan...")
+print("Kamera berhasil dibuka dengan resolusi:", CAM_WIDTH, "x", CAM_HEIGHT)
 time.sleep(1.0)
-print("Kamera siap.")
 
-# 4. Variabel Helper
-# Landmark index untuk kalkulasi
-# (Ini adalah indeks standar dari Mediapipe Face Mesh)
-LANDMARKS = {
-    "lip_top": 13,
-    "lip_bottom": 14,
-    "lip_left": 61,     # Kiri dari perspektif pengguna
-    "lip_right": 291,   # Kanan dari perspektif pengguna
-    "eye_left": 133,    # Kiri dari perspektif pengguna
-    "eye_right": 362,   # Kanan dari perspektif pengguna
-    "brow_left": 107,   # Kiri dari perspektif pengguna
-    "brow_right": 336,  # Kanan dari perspektif pengguna
-    "nose_tip": 1
-}
+frame_queue = queue.Queue(maxsize=1)
+result_lock = threading.Lock()
 
-# Thresholds (ini mungkin perlu disesuaikan)
-THRESH = {
-    "MOUTH_OPEN": 0.4,
-    "BROW_RAISE": 0.3,
-    "MOUTH_SKEW_LEFT": 1.4,  # Rasio jarak (kiri/kanan)
-    "MOUTH_SKEW_RIGHT": 0.6  # Rasio jarak (kiri/kanan)
-}
-
-# Warna visualisasi
-ACTION_COLORS = {
-    "STOP": (0, 0, 255),       # Merah
-    "FORWARD": (0, 255, 0),    # Hijau
-    "LEFT": (0, 255, 255),     # Kuning
-    "RIGHT": (255, 0, 255),    # Magenta
-    "BACKWARD": (255, 0, 0)    # Biru
-}
-
+current_action = "STOP"
 last_command = "STOP"
-pTime = 0 # Untuk kalkulasi FPS
-
-# Buat jendela GUI (seperti diminta)
-cv2.namedWindow('Kontrol Robot Ekspresi Wajah', cv2.WINDOW_NORMAL)
-
-# --- FUNGSI HELPER ---
-
-def get_normalized_distance(p1, p2):
-    """Menghitung jarak euclidean antara dua titik (landmark)."""
-    return np.linalg.norm([p1.x - p2.x, p1.y - p2.y, p1.z - p2.z])
-
-def draw_action_visuals(image, action, color, img_w, img_h):
-    """Menggambar teks aksi dan panah indikator."""
-    # Tampilkan teks Aksi
-    cv2.putText(image, f"Aksi: {action}", (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 3)
-
-    # Tampilkan panah (fitur opsional)
-    mid_x, mid_y = img_w // 2, img_h // 2
-    arrow_length = 70
-    
-    if action == "FORWARD":
-        cv2.arrowedLine(image, (mid_x, mid_y + arrow_length), (mid_x, mid_y - arrow_length), color, 6)
-    elif action == "BACKWARD":
-        cv2.arrowedLine(image, (mid_x, mid_y - arrow_length), (mid_x, mid_y + arrow_length), color, 6)
-    elif action == "LEFT":
-        cv2.arrowedLine(image, (mid_x + arrow_length, mid_y), (mid_x - arrow_length, mid_y), color, 6)
-    elif action == "RIGHT":
-        cv2.arrowedLine(image, (mid_x - arrow_length, mid_y), (mid_x + arrow_length, mid_y), color, 6)
+frame_counter = 0
+running = True
+backward_active = False
+blink_times = []
 
 
-# --- LOOP UTAMA ---
+def get_distance(p1, p2):
+    return np.linalg.norm([p1.x - p2.x, p1.y - p2.y])
 
-try:
-    while cap.isOpened():
-        success, image = cap.read()
-        if not success:
-            print("Mengabaikan frame kamera yang kosong.")
+def eye_aspect_ratio(lm, idx_top, idx_bottom, idx_left, idx_right):
+    vert = get_distance(lm[idx_top], lm[idx_bottom])
+    horiz = get_distance(lm[idx_left], lm[idx_right])
+    return vert / (horiz + 1e-6)
+
+# Deteksi lidah & Mulut dengan tekstur
+def detect_mulut(frame, landmarks, img_w, img_h):
+    lip_top = landmarks[13]
+    lip_bottom = landmarks[14]
+    lip_left = landmarks[61]
+    lip_right = landmarks[291]
+
+    x1 = int(lip_left.x * img_w) - 10
+    x2 = int(lip_right.x * img_w) + 10
+    y1 = int(lip_top.y * img_h) - 5
+    y2 = int(lip_bottom.y * img_h) + 15
+    x1, x2 = sorted([max(0, x1), min(img_w - 1, x2)])
+    y1, y2 = sorted([max(0, y1), min(img_h - 1, y2)])
+
+    mouth_roi = frame[y1:y2, x1:x2]
+    if mouth_roi.size == 0:
+        return False
+
+    eye_left = landmarks[133]
+    eye_right = landmarks[362]
+    eye_distance = get_distance(eye_left, eye_right)
+    mouth_open_ratio = get_distance(lip_top, lip_bottom) / (eye_distance + 1e-6)
+
+    gray = cv2.cvtColor(mouth_roi, cv2.COLOR_BGR2GRAY)
+    lap = cv2.Laplacian(gray, cv2.CV_64F)
+    var_lap = lap.var()  
+
+    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 1)
+
+    return (mouth_open_ratio > 0.3) and (var_lap > 60)
+
+
+def detect_expression(frame, landmarks, img_w, img_h):
+    """Deteksi ekspresi dan tentukan aksi"""
+    global backward_active, blink_times
+
+    lm = landmarks
+
+    # EAR (Eye Aspect Ratio)
+    ear_left = eye_aspect_ratio(lm, 159, 145, 133, 33)
+    ear_right = eye_aspect_ratio(lm, 386, 374, 362, 263)
+    ear_avg = (ear_left + ear_right) / 2
+
+    # Deteksi kedip
+    current_time = time.time()
+    if ear_avg < EAR_THRESHOLD:
+        blink_times.append(current_time)
+        # Hapus kedip lama
+        blink_times = [t for t in blink_times if current_time - t < DOUBLE_BLINK_WINDOW]
+
+        # Jika dua kedip cepat (2x)
+        if len(blink_times) >= 2:
+            backward_active = not backward_active
+            blink_times = []  # reset
+            print("↕ Toggle BACKWARD:", backward_active)
+    # Deteksi lidah
+    lidah = detect_mulut(frame, lm, img_w, img_h)
+
+    if backward_active:
+        print("Mata terkedip lama")
+        return "BACKWARD"
+    elif ear_left < EAR_THRESHOLD and ear_right >= EAR_THRESHOLD:
+        print("Mata kiri tertutup")
+        return "RIGHT"   
+    elif ear_right < EAR_THRESHOLD and ear_left >= EAR_THRESHOLD:
+        print("Mata kanan tertutup")
+        return "LEFT"    
+    elif lidah:
+        print("Mulut terbuka")
+        return "FORWARD"
+    else:
+        return "STOP"
+
+def detection_thread():
+    global current_action, running, frame_counter
+    while running:
+        ret, frame = cap.read()
+        if not ret:
             continue
 
-        # Hitung FPS
-        cTime = time.time()
-        fps = 1 / (cTime - pTime)
-        pTime = cTime
-        img_h, img_w, _ = image.shape
+        frame_counter += 1
+        if frame_counter % FRAME_SKIP != 0:
+            continue
 
-        # Pra-pemrosesan: Flip gambar & konversi BGR ke RGB
-        # Flip (cv2.flip(image, 1)) agar seperti cermin
-        image = cv2.cvtColor(cv2.flip(image, 1), cv2.COLOR_BGR2RGB)
-        image.flags.writeable = False # Optimasi
-
-        # Deteksi Face Mesh
-        results = face_mesh.process(image)
-
-        # Post-pemrosesan: Konversi RGB ke BGR
-        image.flags.writeable = True
-        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-
-        current_action = "STOP" # Default aksi
+        img_h, img_w, _ = frame.shape
+        frame_rgb = cv2.cvtColor(cv2.flip(frame, 1), cv2.COLOR_BGR2RGB)
+        results = face_mesh.process(frame_rgb)
 
         if results.multi_face_landmarks:
             for face_landmarks in results.multi_face_landmarks:
-                # Gambar mesh wajah
-                mp_drawing.draw_landmarks(
-                    image=image,
-                    landmark_list=face_landmarks,
-                    connections=mp_face_mesh.FACEMESH_LIPS,
-                    landmark_drawing_spec=drawing_spec
-                )
+                action = detect_expression(frame, face_landmarks.landmark, img_w, img_h)
+                with result_lock:
+                    current_action = action
 
-                # --- LOGIKA DETEKSI EKSPRESI ---
-                lm = face_landmarks.landmark
-                
-                # 1. Normalisasi: Gunakan jarak antar mata sebagai skala
-                # (Menggunakan koordinat 3D untuk akurasi)
-                eye_left_pt = lm[LANDMARKS["eye_left"]]
-                eye_right_pt = lm[LANDMARKS["eye_right"]]
-                eye_distance = get_normalized_distance(eye_left_pt, eye_right_pt)
+        time.sleep(0.01)
 
-                # 2. Alis Naik (BACKWARD)
-                brow_left_pt = lm[LANDMARKS["brow_left"]]
-                brow_right_pt = lm[LANDMARKS["brow_right"]]
-                brow_dist_left = get_normalized_distance(brow_left_pt, eye_left_pt)
-                brow_dist_right = get_normalized_distance(brow_right_pt, eye_right_pt)
-                avg_brow_dist = (brow_dist_left + brow_dist_right) / 2
-                brow_raise_ratio = avg_brow_dist / eye_distance
+def serial_thread():
+    global last_command, current_action, running
+    while running:
+        with result_lock:
+            action_to_send = current_action
 
-                # 3. Mulut Terbuka (FORWARD)
-                lip_top_pt = lm[LANDMARKS["lip_top"]]
-                lip_bottom_pt = lm[LANDMARKS["lip_bottom"]]
-                mouth_open_dist = get_normalized_distance(lip_top_pt, lip_bottom_pt)
-                mouth_open_ratio = mouth_open_dist / eye_distance
+        if action_to_send != last_command:
+            try:
+                arduino.send_command(action_to_send)
+                last_command = action_to_send
+            except Exception as e:
+                print("[Serial Warning]", e)
+        time.sleep(0.3)
 
-                # 4. Mulut Miring (LEFT/RIGHT)
-                lip_left_pt = lm[LANDMARKS["lip_left"]]
-                lip_right_pt = lm[LANDMARKS["lip_right"]]
-                nose_tip_pt = lm[LANDMARKS["nose_tip"]]
-                dist_left_to_nose = get_normalized_distance(lip_left_pt, nose_tip_pt)
-                dist_right_to_nose = get_normalized_distance(lip_right_pt, nose_tip_pt)
-                
-                # Rasio > 1 = miring kiri, Rasio < 1 = miring kanan
-                # Tambahkan epsilon kecil untuk menghindari pembagian dengan nol
-                mouth_skew_ratio = dist_left_to_nose / (dist_right_to_nose + 1e-6)
+print("Memulai kontrol ekspresi wajah...")
+cv2.namedWindow("Kontrol Robot Ekspresi Wajah", cv2.WINDOW_NORMAL)
 
-                # --- TENTUKAN AKSI ---
-                if brow_raise_ratio > THRESH["BROW_RAISE"]:
-                    current_action = "BACKWARD"
-                elif mouth_open_ratio > THRESH["MOUTH_OPEN"]:
-                    current_action = "FORWARD"
-                elif mouth_skew_ratio > THRESH["MOUTH_SKEW_LEFT"]:
-                    current_action = "LEFT"
-                elif mouth_skew_ratio < THRESH["MOUTH_SKEW_RIGHT"]:
-                    current_action = "RIGHT"
-                else:
-                    current_action = "STOP"
+t_det = threading.Thread(target=detection_thread, daemon=True)
+t_ser = threading.Thread(target=serial_thread, daemon=True)
+t_det.start()
+t_ser.start()
 
-        # Kirim perintah jika aksi berubah
-        if current_action != last_command:
-            arduino.send_command(current_action)
-            last_command = current_action
+try:
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            continue
 
-        # --- VISUALISASI GUI ---
-        
-        # Tampilkan FPS (Fitur opsional)
-        cv2.putText(image, f"FPS: {int(fps)}", (img_w - 150, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        
-        # Tampilkan Aksi dan Panah
-        action_color = ACTION_COLORS.get(current_action, (255, 255, 255))
-        draw_action_visuals(image, current_action, action_color, img_w, img_h)
+        img_h, img_w, _ = frame.shape
+        frame = cv2.flip(frame, 1)
 
-        # Tampilkan hasil
-        cv2.imshow('Kontrol Robot Ekspresi Wajah', image)
+        with result_lock:
+            action_display = current_action
+        color = ACTION_COLORS.get(action_display, (255, 255, 255))
 
-        # Keluar jika menekan tombol 'ESC'
+        if ENABLE_DRAW:
+            cv2.putText(frame, f"Aksi: {action_display}",
+                        (10, 30), osd_font, 0.8, color, 2)
+
+        cv2.imshow("Kontrol Robot Ekspresi Wajah", frame)
         if cv2.waitKey(1) & 0xFF == 27:
             break
 
+except KeyboardInterrupt:
+    pass
 finally:
-    # Selalu pastikan resource ditutup dengan aman
-    print("\nMenutup program...")
+    running = False
     cap.release()
+    face_mesh.close()
     arduino.close()
     cv2.destroyAllWindows()
-    face_mesh.close()
-    print("Semua resource ditutup.")
+    print("Program selesai.")
