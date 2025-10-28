@@ -162,6 +162,7 @@ def detection_thread():
                 action = detect_expression(frame, face_landmarks.landmark, img_w, img_h)
                 with result_lock:
                     current_action = action
+                arduino.send_command(current_action) 
 
         time.sleep(0.01)
 

@@ -1,65 +1,62 @@
-// arduino_dummy.ino
+// ======================================================
+// ARDUINO SERIAL CONTROLLER (Kompatibel dengan controller.py)
+// ======================================================
 
-// Pin LED bawaan (biasanya pin 13 di Arduino Uno)
-const int ledPin = LED_BUILTIN;
+String command = "";  // tempat nyimpan perintah terbaru
 
-String command; // Variabel untuk menyimpan perintah dari Python
+// Pin LED dummy (bisa kamu ganti ke pin motor driver)
+const int LED_STOP = 13;  // LED bawaan
+const int LED_FORWARD = 2;
+const int LED_LEFT = 3;
+const int LED_RIGHT = 4;
+const int LED_BACKWARD = 5;
 
 void setup() {
-  // Inisialisasi Serial Monitor
   Serial.begin(9600);
-  while (!Serial) {
-    ; // Tunggu koneksi serial (penting untuk beberapa board)
-  }
+  pinMode(LED_STOP, OUTPUT);
+  pinMode(LED_FORWARD, OUTPUT);
+  pinMode(LED_LEFT, OUTPUT);
+  pinMode(LED_RIGHT, OUTPUT);
+  pinMode(LED_BACKWARD, OUTPUT);
 
-  // Set pin LED sebagai OUTPUT
-  pinMode(ledPin, OUTPUT);
-  digitalWrite(ledPin, LOW); // Pastikan LED mati
-  
-  Serial.println("Arduino siap menerima perintah...");
+  Serial.println("✅ Arduino siap menerima perintah...");
 }
 
 void loop() {
-  // Cek apakah ada data serial yang masuk
+  // Baca perintah dari serial
   if (Serial.available() > 0) {
-    // Baca data sampai karakter newline ('\n')
     command = Serial.readStringUntil('\n');
-    
-    // Hapus whitespace (jika ada)
-    command.trim(); 
+    command.trim();
 
-    // Proses perintah
+    Serial.print("📩 Perintah diterima: ");
+    Serial.println(command);
+
+    // Matikan semua dulu
+    digitalWrite(LED_STOP, LOW);
+    digitalWrite(LED_FORWARD, LOW);
+    digitalWrite(LED_LEFT, LOW);
+    digitalWrite(LED_RIGHT, LOW);
+    digitalWrite(LED_BACKWARD, LOW);
+
+    // Nyalakan sesuai command
     if (command == "FORWARD") {
-      Serial.println("Status: Bergerak MAJU");
-      blinkLED();
-    } 
-    else if (command == "BACKWARD") {
-      Serial.println("Status: Bergerak MUNDUR");
-      blinkLED();
+      digitalWrite(LED_FORWARD, HIGH);
     } 
     else if (command == "LEFT") {
-      Serial.println("Status: Belok KIRI");
-      blinkLED();
+      digitalWrite(LED_LEFT, HIGH);
     } 
     else if (command == "RIGHT") {
-      Serial.println("Status: Belok KANAN");
-      blinkLED();
+      digitalWrite(LED_RIGHT, HIGH);
+    } 
+    else if (command == "BACKWARD") {
+      digitalWrite(LED_BACKWARD, HIGH);
     } 
     else if (command == "STOP") {
-      Serial.println("Status: BERHENTI");
-      // Tidak berkedip saat berhenti
+      digitalWrite(LED_STOP, HIGH);
     }
-    else {
-      // Perintah tidak dikenal
-      Serial.print("Perintah tidak dikenal: ");
-      Serial.println(command);
-    }
-  }
-}
 
-// Fungsi helper untuk mengedipkan LED
-void blinkLED() {
-  digitalWrite(ledPin, HIGH);
-  delay(300); // Kedip selama 300ms
-  digitalWrite(ledPin, LOW);
+    // Kirim feedback ke Python (bisa dibaca controller.py)
+    Serial.print("✅ Aksi dijalankan: ");
+    Serial.println(command);
+  }
 }
