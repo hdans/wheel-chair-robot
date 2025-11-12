@@ -1,25 +1,90 @@
 // ======================================================
-// ARDUINO SERIAL CONTROLLER (Kompatibel dengan controller.py)
+// ROBOT KENDALI SERIAL (Kompatibel dengan controller.py)
+// ======================================================
+// Fitur: Kendali maju, mundur, kiri, kanan, stop via serial
+// + Kecepatan dapat diatur + Pengereman halus
 // ======================================================
 
-String command = "";  // tempat nyimpan perintah terbaru
+// --- Pin Motor ---
+const int E1 = 5;   // PWM Motor Kiri
+const int M1 = 6;   // Arah Motor Kiri
+const int E2 = 9;   // PWM Motor Kanan
+const int M2 = 10;  // Arah Motor Kanan
 
-// Pin LED dummy (bisa kamu ganti ke pin motor driver)
-const int LED_STOP = 13;  // LED bawaan
-const int LED_FORWARD = 5;
-const int LED_LEFT = 6;
-const int LED_RIGHT = 9;
-const int LED_BACKWARD = 10;
+// --- Variabel global ---
+int speedVal = 100; 
+int fSpeedVal = 150;      // kecepatan default (0–255)
+const int brakeStep = 5;  // penurunan kecepatan per step (semakin kecil = lebih halus)
+const int brakeDelay = 30; // jeda antar step pengereman (ms)
 
+// --- Variabel input ---
+String command = "";  // tempat menyimpan perintah terbaru dari serial
+
+// --- Fungsi Gerakan ---
+void maju() {
+  digitalWrite(M1, LOW);   // motor kiri maju
+  digitalWrite(M2, LOW);   // motor kanan maju
+  analogWrite(E1, fSpeedVal);
+  analogWrite(E2, fSpeedVal);
+  Serial.println("🚗 Maju");
+}
+
+void mundur() {
+  digitalWrite(M1, HIGH);  // motor kiri mundur
+  digitalWrite(M2, HIGH);  // motor kanan mundur
+  analogWrite(E1, speedVal);
+  analogWrite(E2, speedVal);
+  Serial.println("🚗 Mundur");
+}
+
+void belokKiri() {
+  // Roda kiri mundur, kanan maju (pivot left)
+  digitalWrite(M1, HIGH);
+  digitalWrite(M2, LOW);
+  analogWrite(E1, speedVal);
+  analogWrite(E2, speedVal);
+  Serial.println("↩️ Belok kiri di tempat");
+}
+
+void belokKanan() {
+  // Roda kiri maju, kanan mundur (pivot right)
+  digitalWrite(M1, LOW);
+  digitalWrite(M2, HIGH);
+  analogWrite(E1, speedVal);
+  analogWrite(E2, speedVal);
+  Serial.println("↪️ Belok kanan di tempat");
+}
+
+void berhenti() {
+  // Matikan arah dulu supaya tidak mendorong
+  digitalWrite(M1, LOW);
+  digitalWrite(M2, LOW);
+
+  // Pengereman halus
+  for (int s = speedVal; s >= 0; s -= brakeStep) {
+    analogWrite(E1, s);
+    analogWrite(E2, s);
+    delay(brakeDelay);
+  }
+
+  analogWrite(E1, 0);
+  analogWrite(E2, 0);
+  Serial.println("🛑 Robot berhenti dengan halus");
+}
+
+// --- Program Utama ---
 void setup() {
   Serial.begin(9600);
-  pinMode(LED_STOP, OUTPUT);
-  pinMode(LED_FORWARD, OUTPUT);
-  pinMode(LED_LEFT, OUTPUT);
-  pinMode(LED_RIGHT, OUTPUT);
-  pinMode(LED_BACKWARD, OUTPUT);
 
-  Serial.println("✅ Arduino siap menerima perintah...");
+  pinMode(E1, OUTPUT);
+  pinMode(M1, OUTPUT);
+  pinMode(E2, OUTPUT);
+  pinMode(M2, OUTPUT);
+
+  Serial.println("✅ Robot siap menerima perintah dari Python (controller.py)");
+  Serial.println("Perintah: FORWARD | BACKWARD | LEFT | RIGHT | STOP | SPEEDxxx");
+  Serial.print("Kecepatan awal: ");
+  Serial.println(speedVal);
 }
 
 void loop() {
@@ -31,31 +96,38 @@ void loop() {
     Serial.print("📩 Perintah diterima: ");
     Serial.println(command);
 
-    // Matikan semua dulu
-    digitalWrite(LED_STOP, LOW);
-    digitalWrite(LED_FORWARD, LOW);
-    digitalWrite(LED_LEFT, LOW);
-    digitalWrite(LED_RIGHT, LOW);
-    digitalWrite(LED_BACKWARD, LOW);
-
-    // Nyalakan sesuai command
+    // --- Eksekusi Perintah ---
     if (command == "FORWARD") {
-      digitalWrite(LED_FORWARD, HIGH);
-    } 
-    else if (command == "LEFT") {
-      digitalWrite(LED_LEFT, HIGH);
-    } 
-    else if (command == "RIGHT") {
-      digitalWrite(LED_RIGHT, HIGH);
+      maju();
     } 
     else if (command == "BACKWARD") {
-      digitalWrite(LED_BACKWARD, HIGH);
+      mundur();
+    } 
+    else if (command == "LEFT") {
+      belokKiri();
+    } 
+    else if (command == "RIGHT") {
+      belokKanan();
     } 
     else if (command == "STOP") {
-      digitalWrite(LED_STOP, HIGH);
+      berhenti();
+    }
+    else if (command.startsWith("SPEED")) {
+      int newSpeed = command.substring(5).toInt();
+      if (newSpeed >= 0 && newSpeed <= 255) {
+        speedVal = newSpeed;
+        fSpeedVal = newSpeed;
+        Serial.print("⚙️ Kecepatan diubah ke: ");
+        Serial.println(speedVal);
+      } else {
+        Serial.println("❌ Nilai kecepatan tidak valid (0–255).");
+      }
+    }
+    else {
+      Serial.println("❓ Perintah tidak dikenali. Gunakan FORWARD, BACKWARD, LEFT, RIGHT, STOP, atau SPEEDxxx.");
     }
 
-    // Kirim feedback ke Python (bisa dibaca controller.py)
+    // Kirim feedback ke Python
     Serial.print("✅ Aksi dijalankan: ");
     Serial.println(command);
   }

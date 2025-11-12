@@ -8,7 +8,7 @@ class ArduinoController:
         self.timeout = timeout
         self.retry = retry
         self.command_queue = queue.Queue(maxsize=1)
-        self.arduino = None
+        self.arrduino = None
         self.dummy_mode = False
         self.running = True
         self.lock = threading.Lock()
