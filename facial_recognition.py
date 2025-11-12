@@ -102,45 +102,55 @@ def detect_mulut(frame, landmarks, img_w, img_h):
 
 
 def detect_expression(frame, landmarks, img_w, img_h):
-    """Deteksi ekspresi dan tentukan aksi"""
-    global backward_active, blink_times
+    """Deteksi ekspresi berbasis mulut penuh (tanpa kedipan)."""
+    lip_top = landmarks[13]
+    lip_bottom = landmarks[14]
+    lip_left = landmarks[61]
+    lip_right = landmarks[291]
+    nose_tip = landmarks[1]
 
-    lm = landmarks
+    # Region of interest for mouth
+    x1 = int(lip_left.x * img_w) - 10
+    x2 = int(lip_right.x * img_w) + 10
+    y1 = int(lip_top.y * img_h) - 5
+    y2 = int(lip_bottom.y * img_h) + 15
+    x1, x2 = sorted([max(0, x1), min(img_w - 1, x2)])
+    y1, y2 = sorted([max(0, y1), min(img_h - 1, y2)])
 
-    # EAR (Eye Aspect Ratio)
-    ear_left = eye_aspect_ratio(lm, 159, 145, 133, 33)
-    ear_right = eye_aspect_ratio(lm, 386, 374, 362, 263)
-    ear_avg = (ear_left + ear_right) / 2
+    mouth_roi = frame[y1:y2, x1:x2]
+    if mouth_roi.size == 0:
+        return "STOP"
 
-    # Deteksi kedip
-    current_time = time.time()
-    if ear_avg < EAR_THRESHOLD:
-        blink_times.append(current_time)
-        # Hapus kedip lama
-        blink_times = [t for t in blink_times if current_time - t < DOUBLE_BLINK_WINDOW]
+    # Measure mouth geometry
+    mouth_width = get_distance(lip_left, lip_right)
+    mouth_height = get_distance(lip_top, lip_bottom)
+    mouth_ratio = mouth_height / (mouth_width + 1e-6)
 
-        # Jika dua kedip cepat (2x)
-        if len(blink_times) >= 2:
-            backward_active = not backward_active
-            blink_times = []  # reset
-            print("↕ Toggle BACKWARD:", backward_active)
-    # Deteksi lidah
-    lidah = detect_mulut(frame, lm, img_w, img_h)
+    # Compute mouth corner displacement relative to nose
+    mouth_left_dx = lip_left.x - nose_tip.x
+    mouth_right_dx = nose_tip.x - lip_right.x
 
-    if backward_active:
-        print("Mata terkedip lama")
+    # --- Tongue detection (red ratio) ---
+    hsv = cv2.cvtColor(mouth_roi, cv2.COLOR_BGR2HSV)
+    lower_red1 = np.array([0, 100, 80])
+    upper_red1 = np.array([10, 255, 255])
+    lower_red2 = np.array([170, 100, 80])
+    upper_red2 = np.array([180, 255, 255])
+    mask_red = cv2.inRange(hsv, lower_red1, upper_red1) | cv2.inRange(hsv, lower_red2, upper_red2)
+    red_ratio = np.sum(mask_red > 0) / (mask_red.size + 1e-6)
+
+    # --- Decision logic ---
+    if red_ratio > 0.35:          # Tongue detected
         return "BACKWARD"
-    elif ear_left < EAR_THRESHOLD and ear_right >= EAR_THRESHOLD:
-        print("Mata kiri tertutup")
-        return "RIGHT"   
-    elif ear_right < EAR_THRESHOLD and ear_left >= EAR_THRESHOLD:
-        print("Mata kanan tertutup")
-        return "LEFT"    
-    elif lidah:
-        print("Mulut terbuka")
+    elif mouth_ratio > 0.32:      # Mouth open wide
         return "FORWARD"
+    elif mouth_left_dx < -0.065:  # Mouth pulled left
+        return "LEFT"
+    elif mouth_right_dx < -0.065: # Mouth pulled right
+        return "RIGHT"
     else:
         return "STOP"
+
 
 def detection_thread():
     global current_action, running, frame_counter
