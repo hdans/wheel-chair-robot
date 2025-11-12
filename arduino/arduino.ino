@@ -12,8 +12,8 @@ const int E2 = 9;   // PWM Motor Kanan
 const int M2 = 10;  // Arah Motor Kanan
 
 // --- Variabel global ---
-int speedVal = 100; 
-int fSpeedVal = 150;      // kecepatan default (0–255)
+int speedVal = 70; 
+int fSpeedVal = 80;      // kecepatan default (0–255)
 const int brakeStep = 5;  // penurunan kecepatan per step (semakin kecil = lebih halus)
 const int brakeDelay = 30; // jeda antar step pengereman (ms)
 

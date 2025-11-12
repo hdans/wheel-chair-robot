@@ -8,7 +8,7 @@ import time
 from controller import ArduinoController
 
 # Konfigurasi Utama
-ARDUINO_PORT = 'COM8'
+ARDUINO_PORT = 'COM9'
 FRAME_SKIP = 5
 ENABLE_DRAW = True
 CAM_WIDTH, CAM_HEIGHT = 320, 240
@@ -168,13 +168,13 @@ def detect_head_pose(frame, landmarks, img_w, img_h):
     dpitch = pitch - baseline_pitch
 
     if mouth_open:
-        return "STOP"
+        return "BACKWARD"
     elif dyaw > 20:
         return "RIGHT"
     elif dyaw < -20:
         return "LEFT"
-    elif dpitch > 15:
-        return "BACKWARD"
+    # elif dpitch > 15:
+    #     return "BACKWARD"
     elif dpitch < -15:
         return "FORWARD"
     else:

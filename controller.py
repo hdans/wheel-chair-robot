@@ -77,3 +77,12 @@ class ArduinoController:
         if self.arduino and not self.dummy_mode:
             self.arduino.close()
             print("[INFO] Arduino connection closed.")
+
+if __name__ == "__main__":
+    a = ArduinoController(port='COM9')
+    while True:
+        cmd = input("Masukkan command (FORWARD/STOP/LEFT/RIGHT): ").strip().upper()
+        if cmd == "EXIT":
+            break
+        a.send_command(cmd)
+    a.close()        
