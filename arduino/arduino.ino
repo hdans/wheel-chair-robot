@@ -12,8 +12,7 @@ const int E2 = 9;   // PWM Motor Kanan
 const int M2 = 10;  // Arah Motor Kanan
 
 // --- Variabel global ---
-int speedVal = 70; 
-int fSpeedVal = 80;      // kecepatan default (0–255)
+int speedVal = 100; 
 const int brakeStep = 5;  // penurunan kecepatan per step (semakin kecil = lebih halus)
 const int brakeDelay = 30; // jeda antar step pengereman (ms)
 
@@ -24,24 +23,24 @@ String command = "";  // tempat menyimpan perintah terbaru dari serial
 void maju() {
   digitalWrite(M1, LOW);   // motor kiri maju
   digitalWrite(M2, LOW);   // motor kanan maju
-  analogWrite(E1, fSpeedVal);
-  analogWrite(E2, fSpeedVal);
+  analogWrite(E1, speedVal);
+  analogWrite(E2, speedVal);
   Serial.println("🚗 Maju");
 }
 
-void mundur() {
-  digitalWrite(M1, HIGH);  // motor kiri mundur
-  digitalWrite(M2, HIGH);  // motor kanan mundur
-  analogWrite(E1, speedVal);
-  analogWrite(E2, speedVal);
+void mundur(){
+  digitalWrite(E1, LOW);  // motor kiri mundur
+  digitalWrite(E2, LOW);  // motor kanan mundur
+  analogWrite(M1, speedVal);
+  analogWrite(M2, speedVal);
   Serial.println("🚗 Mundur");
 }
 
 void belokKiri() {
   // Roda kiri mundur, kanan maju (pivot left)
-  digitalWrite(M1, HIGH);
+  digitalWrite(E1, LOW);
   digitalWrite(M2, LOW);
-  analogWrite(E1, speedVal);
+  analogWrite(M1, speedVal);
   analogWrite(E2, speedVal);
   Serial.println("↩️ Belok kiri di tempat");
 }
@@ -49,9 +48,9 @@ void belokKiri() {
 void belokKanan() {
   // Roda kiri maju, kanan mundur (pivot right)
   digitalWrite(M1, LOW);
-  digitalWrite(M2, HIGH);
+  digitalWrite(E2, LOW);
   analogWrite(E1, speedVal);
-  analogWrite(E2, speedVal);
+  analogWrite(M2, speedVal);
   Serial.println("↪️ Belok kanan di tempat");
 }
 
@@ -116,7 +115,6 @@ void loop() {
       int newSpeed = command.substring(5).toInt();
       if (newSpeed >= 0 && newSpeed <= 255) {
         speedVal = newSpeed;
-        fSpeedVal = newSpeed;
         Serial.print("⚙️ Kecepatan diubah ke: ");
         Serial.println(speedVal);
       } else {

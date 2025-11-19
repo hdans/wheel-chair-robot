@@ -8,7 +8,7 @@ import time
 from controller import ArduinoController
 
 # Konfigurasi Utama
-ARDUINO_PORT = 'COM9'
+ARDUINO_PORT = 'COM8'
 FRAME_SKIP = 5
 ENABLE_DRAW = True
 CAM_WIDTH, CAM_HEIGHT = 320, 240
