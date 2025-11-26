@@ -12,15 +12,17 @@ const int E2 = 9;   // PWM Motor Kanan
 const int M2 = 10;  // Arah Motor Kanan
 
 // --- Variabel global ---
-int speedVal = 100; 
+int speedVal = 50; 
 const int brakeStep = 5;  // penurunan kecepatan per step (semakin kecil = lebih halus)
-const int brakeDelay = 30; // jeda antar step pengereman (ms)
+const int brakeDelay = 30; // jeda antar step pengereman (ms)'
+int direction = 0;// 0 = berhenti, 1 = maju, -1 = mundur, 2 = kiri, -2 = kanan
 
 // --- Variabel input ---
 String command = "";  // tempat menyimpan perintah terbaru dari serial
 
 // --- Fungsi Gerakan ---
 void maju() {
+  direction = 1;
   digitalWrite(M1, LOW);   // motor kiri maju
   digitalWrite(M2, LOW);   // motor kanan maju
   analogWrite(E1, speedVal);
@@ -29,6 +31,7 @@ void maju() {
 }
 
 void mundur(){
+  direction = -1;
   digitalWrite(E1, LOW);  // motor kiri mundur
   digitalWrite(E2, LOW);  // motor kanan mundur
   analogWrite(M1, speedVal);
@@ -38,6 +41,7 @@ void mundur(){
 
 void belokKiri() {
   // Roda kiri mundur, kanan maju (pivot left)
+  direction = 2;
   digitalWrite(E1, LOW);
   digitalWrite(M2, LOW);
   analogWrite(M1, speedVal);
@@ -46,6 +50,7 @@ void belokKiri() {
 }
 
 void belokKanan() {
+  direction = -2;
   // Roda kiri maju, kanan mundur (pivot right)
   digitalWrite(M1, LOW);
   digitalWrite(E2, LOW);
@@ -55,6 +60,7 @@ void belokKanan() {
 }
 
 void berhenti() {
+  if(direction == 1){ //rem maju
   // Matikan arah dulu supaya tidak mendorong
   digitalWrite(M1, LOW);
   digitalWrite(M2, LOW);
@@ -69,7 +75,57 @@ void berhenti() {
   analogWrite(E1, 0);
   analogWrite(E2, 0);
   Serial.println("🛑 Robot berhenti dengan halus");
+  }
+
+  else if(direction == -1){ //rem mundur
+  // Matikan arah dulu supaya tidak mendorong
+  digitalWrite(E1, LOW);
+  digitalWrite(E2, LOW);
+
+  // Pengereman halus
+  for (int s = speedVal; s >= 0; s -= brakeStep) {
+    analogWrite(M1, s);
+    analogWrite(M2, s);
+    delay(brakeDelay);
+  }
+
+  analogWrite(M1, 0);
+  analogWrite(M2, 0);
+  Serial.println("🛑 Robot berhenti dengan halus");
+  }
+
+  else if (direction == 2){ //rem kiri
+    digitalWrite(E1, LOW);
+    digitalWrite(M2, LOW);
+    for (int s = speedVal; s >= 0; s -= brakeStep) {
+    analogWrite(M1, s);
+    analogWrite(E2, s);
+    delay(brakeDelay);
+  }
+
+  analogWrite(M1, 0);
+  analogWrite(E2, 0);
+  Serial.println("🛑 Robot berhenti dengan halus");
+  }
+
+  else if (direction == -2){
+    digitalWrite(M1, LOW);
+    digitalWrite(E2, LOW);
+    for (int s = speedVal; s >= 0; s -= brakeStep) {
+    analogWrite(E1, s);
+    analogWrite(M2, s);
+    delay(brakeDelay);
+  }
+
+  analogWrite(E1, 0);
+  analogWrite(M2, 0);
+  Serial.println("🛑 Robot berhenti dengan halus");
+  
+  }
+
+  direction = 0;
 }
+
 
 // --- Program Utama ---
 void setup() {
